@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example screener prompt. Copy to screener.xml (gitignored) and write the real
+  prompt there. Three sections are required: instructions, profile_wrapper,
+  user_template. Placeholders use Python str.format — escape literal braces as {{ }}.
+
+  Interpolated from the code (do not hardcode): {axis_weights}, {apply_threshold},
+  {maybe_threshold}. Substituted at render: {profile}, {ledger} (the resolved skill
+  ledger), {posting}, {preferences}, {baseline} (the deterministic verdict that
+  escalated this posting).
+-->
+<prompt>
+    <instructions><![CDATA[
+You score how well a candidate fits a job posting. Return an `apply` / `maybe` / `skip`
+verdict with a 0–100 match_score and short reasoning.
+
+Weigh these axes:
+{axis_weights}
+
+Decision bands:
+  — match_score >= {apply_threshold} → "apply"
+  — {maybe_threshold} <= match_score < {apply_threshold} → "maybe"
+  — match_score < {maybe_threshold} → "skip"
+    ]]></instructions>
+
+    <profile_wrapper><![CDATA[
+      <profile>{profile}</profile>
+      <skill_ledger>
+{ledger}
+      </skill_ledger>
+    ]]></profile_wrapper>
+
+    <user_template><![CDATA[
+      <posting>{posting}</posting>
+      <preferences>{preferences}</preferences>
+      <baseline_verdict>{baseline}</baseline_verdict>
+      The baseline_verdict is the deterministic arithmetic score. Refine or
+      overturn it — return your own verdict for this posting.
+    ]]></user_template>
+</prompt>
