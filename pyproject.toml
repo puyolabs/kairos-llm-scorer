@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "kairos-llm-scorer"
+version = "1.0.0"
+description = "LLM job-fit scoring service with an eval harness, extracted from Kairos."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Moises E. Puyosa" }]
+dependencies = [
+    # parse() / output_config.format require a recent SDK — pin precisely at the gate.
+    "anthropic>=0.40",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "ruff>=0.7"]
+
+[tool.pytest.ini_options]
+# `src` puts the package on the path without an editable install; `.` makes the
+# `tests` package (test doubles in tests/fakes.py) importable across suites.
+pythonpath = ["src", "."]
+# FastAPI's testclient re-exports Starlette's TestClient at import time, which
+# emits a deprecation warning we can't address in our code. Silence just that one.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scorer"]
+# Ship the public template only. The real screener.xml is gitignored and is NOT
+# force-included here, so it never leaks into a published wheel; private deploys
+# add their own. The loader falls back to the .example when screener.xml is absent.
+artifacts = ["src/scorer/infrastructure/screener/prompts/screener.example.xml"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "evals", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Keyword-dense gloss/data fixture — line length hurts readability here.
+"evals/build_synthetic.py" = ["E501"]
+
+[tool.ruff.format]
+docstring-code-format = true
