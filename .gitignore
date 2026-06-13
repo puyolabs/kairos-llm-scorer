@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+
+# Provisioned config (IP / real tuning) — examples are committed, real files are not.
+config/screener.xml
+config/scorer.toml
+
+# uv
+uv.lock
+
+# Eval verdict cache (local LLM-call replay)
+evals/.eval_cache*.json
+
+# Terraform
+infra/cloud/.terraform/
+infra/cloud/*.tfstate
+infra/cloud/*.tfstate.*
+*.tfvars
+
+# OS / editor
+.DS_Store
+.idea/
