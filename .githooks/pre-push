@@ -1,0 +1,27 @@
+#!/bin/sh
+# Pre-push: mirror CI (`make ci` = lint + format-check + tests), but skip
+# entirely when there are no new commits to push.
+
+# git feeds one line per pushed ref on stdin:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+has_commits=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    *[!0]*) ;;        # real sha → keep going
+    *) continue ;;    # all-zeros → branch deletion, nothing to test
+  esac
+  case "$remote_sha" in
+    *[!0]*) range="$remote_sha..$local_sha" ;;  # existing branch: only new commits
+    *)      range="$local_sha" ;;               # new branch: everything reachable
+  esac
+  if [ -n "$(git rev-list -n 1 "$range" 2>/dev/null)" ]; then
+    has_commits=1
+  fi
+done
+
+if [ "$has_commits" = "0" ]; then
+  echo "pre-push: no new commits to push — skipping CI checks."
+  exit 0
+fi
+
+exec make ci
