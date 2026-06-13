@@ -1,0 +1,109 @@
+# Deterministic scorer tuning — EXAMPLE / template.
+#
+# Copy to scorer.toml (gitignored) and tune the values there. The numbers below
+# are illustrative placeholders, NOT a tuned configuration: pick real ones by
+# sweeping against your own eval harness. Every section/key shown here is
+# REQUIRED — the loader fails loud on a missing one. Country/region lists are
+# trimmed to a few entries to show the shape; extend them for your markets.
+
+[weights]            # the four axis weights; MUST sum to 1.0 (validated)
+technical = 0.40     # how much skill-ledger overlap drives the score
+seniority = 0.20
+domain = 0.20
+remote = 0.20
+
+[tier_credit]        # credit a matched ledger skill adds to the technical axis, by tier
+core = 1.0
+proficient = 0.7
+ramping = 0.4
+
+[technical]
+baseline_credit = 0.1   # credit for a posting ability with no ledger match; also the axis rescale floor
+no_abilities_t = 0.5    # neutral technical score when a posting has zero extracted abilities
+
+[relatedness]            # cosine-closeness curve for the vector match path
+exact_sim = 0.95         # cosine >= this → treat as an exact match (full tier credit)
+related_sim_floor = 0.75 # cosine <= this → unrelated (falls back to baseline_credit)
+
+[domain]
+direct = 1.0             # credit bands for the domain axis
+transferable = 0.5
+mismatch = 0.1
+direct_sim = 0.88        # max cosine >= this → direct; <= mismatch_sim → mismatch; between → transferable
+mismatch_sim = 0.72
+
+[role]
+# Role-family GATE threshold. A HARD gate, so keep it CONSERVATIVE: a posting role
+# passes only when its vector is very close to an allowed role-family. Off-discipline
+# roles stay below it and hard-skip; the LLM screener backstops borderline cases.
+gate_sim = 0.80
+
+[seniority]
+step = 0.2               # credit lost per ladder step away from the candidate's level
+neutral = 0.6            # either side unstated → neutral
+
+[seniority.ladder]       # ordinal rungs; distance between them drives the seniority axis
+junior = 0
+mid = 1
+senior = 2
+staff = 3
+
+[remote]
+work_window_hours = 14   # assumed working window per side (e.g. 6am–8pm local)
+full_shift_hours = 8     # overlap that counts as a full match
+unknown = 0.5            # floor for an unplaceable role (normalizes to 0.0)
+
+[remote.region_utc_offset]   # representative offset per posting RoleRegion
+americas = -5.0
+europe = 1.0
+apac = 8.0
+mea = 3.0
+
+# Representative UTC offset per candidate working country (ISO 3166-1 alpha-2).
+# A few illustrative entries — add the countries you recruit from. Unmapped
+# countries are treated as unplaceable (remote axis floor), never wrongly rejected.
+[remote.country_utc_offset]
+US = -5.0
+GB = 0.0
+DE = 1.0
+IN = 5.5
+SG = 8.0
+AU = 10.0
+
+[engagement]
+mismatch_factor = 0.9    # soft penalty when the posting kind misses the owner's preference
+
+# Posting `remote` → profile WorkArrangement (the modality gate factor).
+# `unknown` is intentionally absent: it has no equivalent → the factor passes.
+[modality.remote_to_arrangement]
+yes = "remote"
+hybrid = "hybrid"
+no = "onsite"
+
+# ── Eligibility regions ──────────────────────────────────────────────────────
+# Named country building blocks; gates below compose them by union. Lists need
+# not be exhaustive — a missing country is a recall-safe miss the LLM backstops,
+# never a silent wrong reject. Trimmed here to a few markets; extend per region.
+[eligibility.regions]
+us = ["US"]
+ca = ["CA"]
+uk = ["GB"]
+eu = ["DE", "FR", "ES"]        # EU-27 — list all members in production
+mea = ["AE", "ZA"]
+latam = ["MX", "BR", "AR"]
+anz = ["AU", "NZ"]
+apac_extra = ["JP", "SG", "IN"]
+
+# ── Gate → admitted regions ──────────────────────────────────────────────────
+# Each posting EligibilityGate maps to the region blocks it admits (unioned).
+# `none` / `unknown` carry no restriction and are deliberately absent.
+[eligibility.gates]
+us-only = ["us"]
+canada-only = ["ca"]
+uk-only = ["uk"]
+north-america-only = ["us", "ca"]
+eu-only = ["eu"]
+emea-only = ["eu", "uk", "mea"]
+latam-only = ["latam"]
+apac-only = ["anz", "apac_extra"]
+anz-only = ["anz"]

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Screener prompt — EXAMPLE / template. Copy to screener.xml (gitignored) and write
+  the real prompt there; the loader fails loud if screener.xml is absent (no fallback
+  to this file). The instructions below are a deliberately generic skeleton — your
+  real prompt carries the detailed rubric, guardrails, and output contract.
+
+  Three sections are REQUIRED. They map to the message layout, which is split for
+  prompt caching — the profile is large and stable, the posting small and volatile:
+    - instructions    → system block 1: stable rules; cached with the profile.
+    - profile_wrapper → system block 2: the candidate (cached prefix — reused across
+                        every posting scored against the same profile).
+    - user_template   → user turn: the per-posting payload (NOT cached).
+
+  Placeholders use Python str.format — escape any literal brace as {{ }}.
+  Interpolated from code (do not hardcode the numbers): {axis_weights},
+  {apply_threshold}, {maybe_threshold}. Substituted at render: {profile},
+  {ledger} (resolved skill ledger), {posting}, {preferences}, {baseline}
+  (the deterministic verdict that escalated this posting).
+-->
+<prompt>
+    <instructions><![CDATA[
+You score how well a candidate fits a job posting. Return an `apply` / `maybe` / `skip`
+verdict with a 0–100 match_score and short reasoning.
+
+Weigh these axes (weights injected so the prompt can't drift from the scorer):
+{axis_weights}
+
+Decision bands:
+  — match_score >= {apply_threshold} → "apply"
+  — {maybe_threshold} <= match_score < {apply_threshold} → "maybe"
+  — match_score < {maybe_threshold} → "skip"
+    ]]></instructions>
+
+    <!-- The candidate side: freeform body + the structured skill ledger the
+         technical axis scores against. This whole block is the cached prefix. -->
+    <profile_wrapper><![CDATA[
+      <profile>{profile}</profile>
+      <skill_ledger>
+{ledger}
+      </skill_ledger>
+    ]]></profile_wrapper>
+
+    <!-- The posting side + the deterministic baseline to refine or overturn. -->
+    <user_template><![CDATA[
+      <posting>{posting}</posting>
+      <preferences>{preferences}</preferences>
+      <baseline_verdict>{baseline}</baseline_verdict>
+      The baseline_verdict is the deterministic arithmetic score. Refine or
+      overturn it — return your own verdict for this posting.
+    ]]></user_template>
+</prompt>
