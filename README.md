@@ -1,5 +1,7 @@
 # kairos-llm-scorer
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 > An LLM job-fit scoring service. Takes a job posting faced against a candidate
 > profile (with embedded preferences) and returns a structured
 > **apply / maybe / skip** verdict with a 0–100 match score and cited reasoning.
@@ -205,3 +207,8 @@ itself requires `config/scorer.toml`, so **`/score` and the eval both need it
 provisioned**; `/health` needs neither it nor the screener prompt. The axis weights
 here are also the single source the LLM prompt's rubric is interpolated from, so
 the prompt cannot drift from the scorer.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [`NOTICE`](NOTICE)
+for attribution.
