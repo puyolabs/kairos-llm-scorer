@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# Local topology — CLUSTER (multi-project host, shared edge proxy).
+#
+#   docker compose -f infra/local/cluster/docker-compose.yml up -d --wait
+#
+# The host-level shared edge Caddy owns :80/:443 and fans out by Host header to
+# each project's inner Caddy over the shared external `edge` network. This stack
+# binds NO host ports — it only joins `edge` with the stable alias `kairos-llm-scorer-inner`,
+# so it can never collide with a sibling project (e.g. kairos). The edge fragment
+# ./edge/kairos-llm-scorer.caddy maps the scorer hostnames to this alias.
+name: kairos-llm-scorer
+
+# Pull in the shared scorer service. Its relative paths resolve from infra/.
+include:
+  - ../../docker-compose.base.yml
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      default:
+      edge:
+        aliases:
+          - kairos-llm-scorer-inner
+    depends_on:
+      scorer:
+        condition: service_healthy
+
+networks:
+  # Shared external network joining this project's inner Caddy with the
+  # host-level edge proxy. Created out-of-band on the deploy host:
+  #   docker network create edge
+  edge:
+    external: true

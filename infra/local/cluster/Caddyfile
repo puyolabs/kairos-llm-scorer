@@ -1,0 +1,8 @@
+# Inner reverse proxy — CLUSTER mode. Reachable only via the shared edge over the
+# shared `edge` network (alias `kairos-llm-scorer-inner`); binds no host ports. The edge
+# terminates TLS and forwards plaintext on :80, so this listens on :80 and
+# forwards to the scorer container. Host-based routing is the edge's job
+# (./edge/kairos-llm-scorer.caddy) — here we answer on any Host.
+:80 {
+	reverse_proxy scorer:8000
+}

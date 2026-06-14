@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# Local topology — STANDALONE (this host runs only the scorer).
+#
+#   docker compose -f infra/local/standalone/docker-compose.yml up -d --wait
+#
+# No shared edge proxy — the scorer's own Caddy owns the host's HTTP(S) ports and
+# reverse-proxies to the service. This is the only topology that binds host ports.
+# Use it on a dedicated box (a VPS, a cloud instance, a laptop trying the repo).
+#
+# HTTP vs HTTPS is config, not code — driven by SCORER_SITE_ADDRESS:
+#   :80                       → plain HTTP, any Host (default; LAN/localhost)
+#   http://scorer.example.com → plain HTTP, that host only
+#   scorer.example.com        → HTTPS, Caddy auto-issues a Let's Encrypt cert
+#                               (needs a real domain + ports 80/443 reachable;
+#                                certs persist in the caddy_data volume)
+name: kairos-llm-scorer
+
+# Pull in the shared scorer service. Its relative paths resolve from infra/.
+include:
+  - ../../docker-compose.base.yml
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SCORER_SITE_ADDRESS: ${SCORER_SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    ports:
+      - "${SCORER_HTTP_PORT:-80}:80"
+      - "${SCORER_HTTPS_PORT:-443}:443"
+    depends_on:
+      scorer:
+        condition: service_healthy
+
+volumes:
+  # Persists Caddy's issued certs / ACME account across restarts.
+  caddy_data:

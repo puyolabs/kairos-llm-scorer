@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+# Kubernetes deploy for kairos-llm-scorer — the portable cloud target (EKS/GKE/
+# AKS/DO/k3s). Equivalent in intent to infra/cloud/main.tf's Fargate stack.
+#
+# Apply order:
+#   1. Create the secret (NOT committed — values are yours):
+#        kubectl create secret generic kairos-llm-scorer \
+#          --from-literal=anthropic-api-key=sk-ant-... \
+#          --from-literal=scorer-api-keys='clientkey1,clientkey2'
+#      Leave scorer-api-keys empty ONLY for a private/in-cluster deploy; set it
+#      before exposing the Ingress publicly (it is the authorized-call gate).
+#   2. kubectl apply -f infra/cloud/k8s/deployment.yaml
+#   3. Point the Ingress host at your DNS, or drop the Ingress and use the
+#      Service (type LoadBalancer) directly.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kairos-llm-scorer
+  labels:
+    app: kairos-llm-scorer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kairos-llm-scorer
+  template:
+    metadata:
+      labels:
+        app: kairos-llm-scorer
+    spec:
+      containers:
+        - name: scorer
+          # Pin to your registry image (ECR/GCR/GHCR), e.g.
+          # 123456789012.dkr.ecr.us-east-1.amazonaws.com/kairos-llm-scorer:<sha>
+          image: kairos-llm-scorer:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: KAIROS_SCORER_MODEL
+              value: claude-sonnet-4-6
+            - name: KAIROS_SCORER_EFFORT
+              value: medium
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kairos-llm-scorer
+                  key: anthropic-api-key
+            # The authorized-vs-unauthorized gate for POST /score. When set,
+            # callers must present a matching key (Authorization: Bearer / X-API-Key).
+            - name: KAIROS_SCORER_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: kairos-llm-scorer
+                  key: scorer-api-keys
+          # /health is unauthenticated by design — used for both probes.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kairos-llm-scorer
+  labels:
+    app: kairos-llm-scorer
+spec:
+  selector:
+    app: kairos-llm-scorer
+  ports:
+    - port: 80
+      targetPort: 8000
+---
+# Optional public surface. Requires an ingress controller (nginx, ALB, Traefik…).
+# Delete this and set the Service `type: LoadBalancer` if you prefer a raw LB.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kairos-llm-scorer
+  labels:
+    app: kairos-llm-scorer
+spec:
+  rules:
+    - host: scorer.example.com # TODO: your public hostname
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kairos-llm-scorer
+                port:
+                  number: 80

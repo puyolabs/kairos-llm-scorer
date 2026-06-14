@@ -1,0 +1,24 @@
+# Keep the build context small and secret-free.
+.git
+.github
+.idea
+.inspections
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+*.egg-info
+dist
+build
+# Secrets / local env never enter an image.
+.env
+.env.*
+!.env.example
+# Eval artifacts and dev-only material aren't needed at runtime.
+evals/.backup
+evals/llm_cache.jsonl
+tests
+*.log
+.DS_Store

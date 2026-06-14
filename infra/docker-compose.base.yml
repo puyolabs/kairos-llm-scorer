@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# Base stack — the scorer service alone, shared by both local topologies.
+#
+# Not run directly. Each topology under infra/local/<topology>/docker-compose.yml
+# `include`s this file and adds its own edge (a Caddy that owns host ports in
+# standalone, or one that joins the shared `edge` network in cluster). Relative
+# paths here resolve from THIS file's dir (infra/), so the build context is the
+# repo root regardless of which topology includes it.
+#
+# Auth: leave KAIROS_SCORER_API_KEYS empty for local/LAN (gate off); set it
+# before the public surface is unblocked (see infra/README.md).
+services:
+  scorer:
+    build:
+      context: .. # repo root (pyproject + src); base.yml lives in infra/
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    # The real scorer.toml / screener.xml are gitignored (IP / tuning) and so are
+    # excluded from the image by Dockerfile.dockerignore — only the .example.*
+    # get baked. Provision the real files into the deploy workdir's config/ once
+    # (they survive `checkout -f`) and mount them read-only over the baked dir.
+    # Relative paths in this included file resolve from infra/ (same base as the
+    # build context above), so ../config is the repo-root / deploy-workdir config/.
+    volumes:
+      - ../config:/app/config:ro
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      KAIROS_SCORER_API_KEYS: ${KAIROS_SCORER_API_KEYS:-}
+      KAIROS_SCORER_MODEL: ${KAIROS_SCORER_MODEL:-claude-sonnet-4-6}
+      KAIROS_SCORER_EFFORT: ${KAIROS_SCORER_EFFORT:-medium}
+      KAIROS_BUILD_SHA: ${KAIROS_BUILD_SHA:-dev}
+    # /health is unauthenticated by design, so it doubles as the container probe.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    expose:
+      - "8000"

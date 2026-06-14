@@ -1,0 +1,6 @@
+# Standalone reverse proxy — this Caddy owns the host's :80/:443 and proxies to
+# the scorer. SCORER_SITE_ADDRESS picks the listen address + TLS posture:
+#   :80 (default) → plain HTTP, any Host;  a bare domain → automatic HTTPS.
+{$SCORER_SITE_ADDRESS} {
+	reverse_proxy scorer:8000
+}
