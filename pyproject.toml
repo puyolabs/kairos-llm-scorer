@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [project]
 name = "kairos-llm-scorer"
-version = "1.0.0"
+version = "1.1.0"
 description = "LLM job-fit scoring service with an eval harness, extracted from Kairos."
 readme = "README.md"
 requires-python = ">=3.11"
