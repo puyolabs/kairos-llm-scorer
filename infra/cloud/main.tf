@@ -128,6 +128,10 @@ resource "aws_ecr_repository" "app" {
   name                 = local.name
   image_tag_mutability = "MUTABLE"
 
+  # Allow `terraform destroy` to delete the repo even when it still holds pushed
+  # images — otherwise teardown fails with RepositoryNotEmptyException.
+  force_delete = true
+
   image_scanning_configuration {
     scan_on_push = true
   }
