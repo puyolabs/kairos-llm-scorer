@@ -125,3 +125,36 @@ def test_unconfigured_vocabulary_returns_422_with_violations(client):
     )
     assert violation["value"] == "ZZ"
     assert "ZZ" not in violation["allowed"]
+
+
+def test_dimension_mismatch_returns_422_with_detail_list(client):
+    """Mismatched embedding dimensions hit the model_validator → ValidationError,
+    which the hand-rolled handler maps to FastAPI's default {"detail": [...]} shape.
+    Pins that contract now that /score parses the body itself."""
+    api.app.dependency_overrides[get_settings] = _with_keys("")  # auth off
+    bad = {
+        **_REQUEST,
+        "profile": {
+            "body": "x",
+            "preferences": {
+                "candidate_domains": [
+                    {"tag": "a", "gloss": "a", "vector": [1.0, 0.0]},
+                    {"tag": "b", "gloss": "b", "vector": [1.0, 0.0, 0.0]},
+                ]
+            },
+        },
+    }
+    resp = client.post("/score", json=bad)
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert isinstance(payload["detail"], list)
+    assert any("dimension" in err["msg"] for err in payload["detail"])
+
+
+def test_malformed_json_body_returns_422(client):
+    """A body that isn't valid JSON raises a pydantic ValidationError from
+    model_validate_json — same 422 path, not a 500."""
+    api.app.dependency_overrides[get_settings] = _with_keys("")  # auth off
+    resp = client.post("/score", content=b"{not json", headers={"Content-Type": "application/json"})
+    assert resp.status_code == 422
+    assert isinstance(resp.json()["detail"], list)
