@@ -16,11 +16,15 @@ The LLM stage runs only when an `ANTHROPIC_API_KEY` and the (gitignored, IP)
 and notes the LLM column as not run. Pass `--no-llm` to force baseline-only, or
 `--limit N` to score only the first N examples.
 
-LLM verdicts are cached to `evals/.eval_cache.json` (gitignored), keyed by
-model + judgement + the full posting×profile request. Re-running replays cached
-verdicts instead of re-billing the same call; pass `--no-cache` to force fresh calls.
+Artifacts are written per model family: the report to `evals/report.<slug>.md`
+(committed) and the verdict cache to `evals/.eval_cache.<slug>.json` (gitignored),
+where `<slug>` is the model's pricing family (sonnet/haiku/opus). The cache is keyed
+by model + judgement + the vector-stripped request + baseline — only what the
+screener actually sends Anthropic — so re-running replays cached verdicts instead of
+re-billing; pass `--no-cache` to force fresh calls, or `--rekey` to migrate a cache
+built under the legacy whole-request key (no LLM calls).
 
-Usage: uv run python -m evals.run_eval [--no-llm] [--limit N]
+Usage: uv run python -m evals.run_eval [--judgement off|narrow|wide] [--limit N]
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -46,8 +51,6 @@ from scorer.infrastructure.screener.prompt import _PROMPT_FILE  # noqa: E402
 HERE = Path(__file__).parent
 GOLDEN = HERE / "golden.jsonl"
 PROFILE = HERE / "profile.json"
-REPORT = HERE / "report.md"
-CACHE = HERE / ".eval_cache.json"
 
 DECISIONS: tuple[Decision, ...] = ("apply", "maybe", "skip")
 
@@ -58,6 +61,29 @@ PRICING = {
     "haiku": {"input": 0.80, "output": 4.0, "cache_write": 1.0, "cache_read": 0.08},
     "opus": {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.50},
 }
+
+
+def _model_slug(model: str) -> str:
+    """Short family tag for naming per-model artifacts (cache + report).
+
+    Matches the PRICING family keys (``sonnet``/``haiku``/``opus``) so the files
+    written line up with the committed ``report.<slug>.md`` / ``.eval_cache.<slug>.json``
+    products; falls back to a sanitized model id for an unrecognized family.
+    """
+    for family in PRICING:
+        if family in model:
+            return family
+    return re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")
+
+
+def _cache_path(model: str) -> Path:
+    """On-disk verdict cache for ``model`` (gitignored, one file per family)."""
+    return HERE / f".eval_cache.{_model_slug(model)}.json"
+
+
+def _report_path(model: str) -> Path:
+    """Markdown report for ``model`` (committed, one file per family)."""
+    return HERE / f"report.{_model_slug(model)}.md"
 
 
 # ── Golden I/O ──────────────────────────────────────────────────────────────
@@ -295,11 +321,44 @@ def _usd(x: float | None) -> str:
 
 # ── Verdict cache ───────────────────────────────────────────────────────────
 # Persistent across runs: a posting×profile faced under the same model+judgement
-# yields the same verdict, so we replay it from disk instead of re-billing Haiku.
-# Keyed by a hash of (model, judgement, full request) so any change busts the key.
+# yields the same verdict, so we replay it from disk instead of re-billing the LLM.
+#
+# Keyed by a hash of *only what the screener actually sends to Anthropic*: model,
+# judgement, the request with embedding vectors stripped, and the deterministic
+# baseline. The prompt builder drops every 768-float vector before the LLM sees it
+# (`prompt._strip_vectors`); the vectors influence the verdict solely through the
+# baseline, which is in the key. So re-embedding the profile or moving to a binary
+# vector wire format leaves the key untouched (no re-bill), while a genuine change
+# to the posting/profile text or the baseline the model reads still busts it.
+#
+# Migrating from the legacy whole-request key is lossless via `--rekey` (no calls).
 
 
-def _cache_key(req: ScoreRequest, model: str) -> str:
+def _strip_vectors(node: object) -> object:
+    """Drop every ``vector`` key from a dumped tree — they never reach the LLM."""
+    if isinstance(node, dict):
+        return {k: _strip_vectors(v) for k, v in node.items() if k != "vector"}
+    if isinstance(node, list):
+        return [_strip_vectors(x) for x in node]
+    return node
+
+
+def _cache_key(req: ScoreRequest, model: str, baseline: Verdict) -> str:
+    """Hash the verdict-determining inputs: model, judgement, stripped request, baseline."""
+    payload = json.dumps(
+        {
+            "model": model,
+            "judgement": req.sonnet_judgement,
+            "request": _strip_vectors(req.model_dump(mode="json")),
+            "baseline": baseline.model_dump(mode="json"),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _legacy_cache_key(req: ScoreRequest, model: str) -> str:
+    """The pre-vector-strip key (whole request hashed). Used only to migrate caches."""
     payload = json.dumps(
         {"model": model, "judgement": req.sonnet_judgement, "request": req.model_dump(mode="json")},
         sort_keys=True,
@@ -307,17 +366,57 @@ def _cache_key(req: ScoreRequest, model: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def _load_cache() -> dict[str, dict]:
-    if not CACHE.exists():
+def _load_cache(cache_path: Path) -> dict[str, dict]:
+    if not cache_path.exists():
         return {}
     try:
-        return json.loads(CACHE.read_text())
+        return json.loads(cache_path.read_text())
     except json.JSONDecodeError:
         return {}
 
 
-def _save_cache(cache: dict[str, dict]) -> None:
-    CACHE.write_text(json.dumps(cache, indent=0))
+def _save_cache(cache: dict[str, dict], cache_path: Path) -> None:
+    cache_path.write_text(json.dumps(cache, indent=0))
+
+
+def _rekey_cache(
+    cases: list[GoldenCase],
+    baselines: list[Verdict | None],
+    model: str,
+    judgement: str,
+    cache_path: Path,
+) -> None:
+    """Re-key the existing cache from the legacy whole-request key to the new key.
+
+    Lossless and billing-free: for each golden case it recomputes the legacy key
+    (raw request) and the new key (stripped request + baseline) and copies the
+    cached verdict across. ``judgement`` must match the mode the cache was built
+    under (e.g. ``wide``) — both keys embed it, exactly as ``_run_llm`` forces it.
+    Old entries are kept (idempotent, harmless). Run this *before* regenerating
+    ``profile.json`` — once the vectors change, the legacy keys no longer match
+    what's on disk and the mapping is lost.
+    """
+    cache = _load_cache(cache_path)
+    migrated = already = missing = 0
+    for c, bv in zip(cases, baselines, strict=True):
+        if bv is None:
+            continue
+        req = c.request.model_copy(update={"sonnet_judgement": judgement})
+        old = _legacy_cache_key(req, model)
+        new = _cache_key(req, model, bv)
+        if new in cache:
+            already += 1
+        elif old in cache:
+            cache[new] = cache[old]
+            migrated += 1
+        else:
+            missing += 1
+    _save_cache(cache, cache_path)
+    print(
+        f"rekey ({model} → {cache_path.name}): {migrated} migrated, "
+        f"{already} already new-keyed, {missing} not in legacy cache "
+        f"(those re-bill if escalated)."
+    )
 
 
 # ── Entry point ─────────────────────────────────────────────────────────────
@@ -345,6 +444,12 @@ def main() -> None:
         action="store_true",
         help="ignore the on-disk verdict cache and re-bill every LLM call",
     )
+    parser.add_argument(
+        "--rekey",
+        action="store_true",
+        help="migrate the cache to the new key (no LLM calls), then exit; "
+        "use the judgement the cache was built under, e.g. --judgement wide --rekey",
+    )
     args = parser.parse_args()
 
     cases = load_golden()
@@ -355,6 +460,8 @@ def main() -> None:
 
     settings = get_settings()
     usage = Usage()
+    cache_path = _cache_path(settings.scorer_model)
+    report_path = _report_path(settings.scorer_model)
 
     tuning = get_scorer_tuning()
     base = Column("baseline")
@@ -367,6 +474,14 @@ def main() -> None:
                 maybe_threshold=settings.maybe_threshold,
             )
         )
+
+    if args.rekey:
+        if args.judgement == "off":
+            raise SystemExit(
+                "--rekey needs the judgement the cache was built under, e.g. --judgement wide"
+            )
+        _rekey_cache(cases, base.verdicts, settings.scorer_model, args.judgement, cache_path)
+        return
 
     llm = Column("llm")
     # How many postings the baseline escalates to the screener — a deterministic
@@ -388,7 +503,7 @@ def main() -> None:
             raise SystemExit(f"--judgement {args.judgement} needs the LLM but {why}.")
         # Force the chosen mode on every request so the run's cost is one explicit knob.
         screener = _metered_screener(usage)
-        cache = {} if args.no_cache else _load_cache()
+        cache = {} if args.no_cache else _load_cache(cache_path)
 
         async def _run_llm() -> int:
             """Score every escalating case under one event loop.
@@ -399,9 +514,9 @@ def main() -> None:
             closed loops). Returns the cache-hit count for the run summary.
             """
             hits = 0
-            for c in cases:
+            for c, bv in zip(cases, base.verdicts, strict=True):
                 req = c.request.model_copy(update={"sonnet_judgement": args.judgement})
-                key = _cache_key(req, settings.scorer_model)
+                key = _cache_key(req, settings.scorer_model, bv)
                 if not args.no_cache and key in cache:
                     llm.verdicts.append(Verdict.model_validate(cache[key]))
                     hits += 1
@@ -417,14 +532,14 @@ def main() -> None:
 
         cache_hits = asyncio.run(_run_llm())
         if not args.no_cache:
-            _save_cache(cache)
+            _save_cache(cache, cache_path)
         if cache_hits:
             print(f"  verdict cache: {cache_hits}/{len(cases)} replayed (no LLM call)")
 
     report = render_report(cases, llm, base, usage, settings.scorer_model, escalated)
-    REPORT.write_text(report)
+    report_path.write_text(report)
 
-    print(f"Scored {len(cases)} examples → {REPORT}")
+    print(f"Scored {len(cases)} examples → {report_path}")
     print(f"  baseline agreement: {_pct(base.agreement(cases))}  MAE: {_fmt(base.mae(cases))}")
     if llm.ran:
         print(f"  LLM agreement:      {_pct(llm.agreement(cases))}  MAE: {_fmt(llm.mae(cases))}")
