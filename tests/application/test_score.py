@@ -114,7 +114,8 @@ def _force_band(
 # ── vocabulary guard runs before scoring ────────────────────────────────────
 
 
-def test_score_rejects_unconfigured_vocabulary_before_screening(monkeypatch, baseline_score):
+@pytest.mark.anyio
+async def test_score_rejects_unconfigured_vocabulary_before_screening(monkeypatch, baseline_score):
     """score() runs the vocabulary guard first: a bad value raises and the screener
     is never reached (the guard fails closed, before any baseline/escalation)."""
     _force_band(monkeypatch, baseline_score, "apply")
@@ -127,7 +128,7 @@ def test_score_rejects_unconfigured_vocabulary_before_screening(monkeypatch, bas
         }
     )
     with pytest.raises(RequestVocabularyError):
-        score(bad, screener=fake)
+        await score(bad, screener=fake)
     assert fake.call_count == 0  # rejected before the LLM stage
 
 
@@ -177,14 +178,15 @@ def test_should_escalate_truth_table(
         ("skip", "wide", False),
     ],
 )
-def test_score_escalation_routing(
+@pytest.mark.anyio
+async def test_score_escalation_routing(
     monkeypatch, baseline_score: int, band: Decision, judgement: SonnetJudgement, escalates: bool
 ):
     _force_band(monkeypatch, baseline_score, band)
     fake = FakeScreener(_SCREENER_VERDICT)
     request = _request(judgement)
 
-    verdict = score(request, screener=fake)
+    verdict = await score(request, screener=fake)
 
     if escalates:
         assert fake.call_count == 1
@@ -205,47 +207,51 @@ def test_score_escalation_routing(
         assert verdict.match_score == baseline_score
 
 
-def test_wide_escalates_near_miss_skip_at_floor(monkeypatch, baseline_score):
+@pytest.mark.anyio
+async def test_wide_escalates_near_miss_skip_at_floor(monkeypatch, baseline_score):
     """A `skip`-band verdict still escalates under `wide` when its score reaches the
     floor — the near-miss band the LLM most often overturns."""
     _force_band(monkeypatch, baseline_score, "skip", escalate_floor=baseline_score)
     fake = FakeScreener(_SCREENER_VERDICT)
 
-    verdict = score(_request("wide"), screener=fake)
+    verdict = await score(_request("wide"), screener=fake)
 
     assert fake.call_count == 1  # score ≥ floor → escalated despite skip band
     assert verdict.decision == "skip"  # the screener's overturned verdict surfaces
     assert verdict.reasoning == "overturned by screener"
 
 
-def test_wide_does_not_escalate_skip_below_floor(monkeypatch, baseline_score):
+@pytest.mark.anyio
+async def test_wide_does_not_escalate_skip_below_floor(monkeypatch, baseline_score):
     """A `skip` whose score is under the floor (a hard-gate-style skip) never escalates."""
     _force_band(monkeypatch, baseline_score, "skip", escalate_floor=baseline_score + 1)
     fake = FakeScreener(_SCREENER_VERDICT)
 
-    verdict = score(_request("wide"), screener=fake)
+    verdict = await score(_request("wide"), screener=fake)
 
     assert fake.call_count == 0  # below floor → no call
     assert verdict.decision == "skip"
     assert verdict.match_score == baseline_score  # untouched arithmetic verdict
 
 
-def test_provenance_is_stamped_on_the_arithmetic_path(monkeypatch, baseline_score):
+@pytest.mark.anyio
+async def test_provenance_is_stamped_on_the_arithmetic_path(monkeypatch, baseline_score):
     """The deterministic verdict gets version/build_sha/scorer stamped on exit."""
     settings = _force_band(monkeypatch, baseline_score, "maybe")
-    verdict = score(_request("off"), screener=FakeScreener())
+    verdict = await score(_request("off"), screener=FakeScreener())
 
     assert verdict.version == __version__
     assert verdict.build_sha == settings.build_sha == _BUILD_SHA
     assert verdict.scorer == SCORER_MODEL_SENTINEL
 
 
-def test_provenance_overwrites_screener_supplied_values(monkeypatch, baseline_score):
+@pytest.mark.anyio
+async def test_provenance_overwrites_screener_supplied_values(monkeypatch, baseline_score):
     """Provenance is single-sourced in score(): model-set fields are overwritten."""
     _force_band(monkeypatch, baseline_score, "apply")
     fake = FakeScreener(_SCREENER_VERDICT)  # carries POISON provenance
 
-    verdict = score(_request("wide"), screener=fake)
+    verdict = await score(_request("wide"), screener=fake)
 
     assert verdict.version == __version__
     assert verdict.build_sha == _BUILD_SHA
@@ -256,7 +262,10 @@ def test_provenance_overwrites_screener_supplied_values(monkeypatch, baseline_sc
     assert _SCREENER_VERDICT.version == "POISON"
 
 
-def test_screener_substance_passes_through_only_provenance_changes(monkeypatch, baseline_score):
+@pytest.mark.anyio
+async def test_screener_substance_passes_through_only_provenance_changes(
+    monkeypatch, baseline_score
+):
     """On escalation the screener's verdict surfaces byte-for-byte — only the three
     provenance fields are stamped; every substantive field is preserved."""
     _force_band(monkeypatch, baseline_score, "apply")
@@ -271,7 +280,7 @@ def test_screener_substance_passes_through_only_provenance_changes(monkeypatch, 
         scorer="POISON",
     )
 
-    verdict = score(_request("wide"), screener=FakeScreener(rich))
+    verdict = await score(_request("wide"), screener=FakeScreener(rich))
 
     # Substantive fields pass through unchanged.
     assert verdict.decision == "apply"

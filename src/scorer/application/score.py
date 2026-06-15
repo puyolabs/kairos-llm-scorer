@@ -41,7 +41,7 @@ def _should_escalate(baseline: Verdict, judgement: SonnetJudgement, *, escalate_
     return baseline.decision in ("maybe", "apply") or baseline.match_score >= escalate_floor
 
 
-def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
+async def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
     """Score a request end to end and return the provenance-stamped verdict.
 
     Validates the request vocabulary (raising on unconfigured values), computes
@@ -49,6 +49,10 @@ def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
     ``_should_escalate`` says so. The surfaced verdict — baseline or screener — is
     copied with the canonical provenance fields stamped, so those are
     single-sourced here rather than trusted from either stage.
+
+    Async because escalation is a network round-trip: awaiting the screener frees
+    the event loop to serve other requests during the multi-second LLM call. The
+    arithmetic stage stays synchronous — it is fast and CPU-bound.
 
     Args:
         request: The posting + profile to score, carrying its ``sonnet_judgement``.
@@ -69,13 +73,10 @@ def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
         apply_threshold=settings.apply_threshold,
         maybe_threshold=settings.maybe_threshold,
     )
-    verdict = (
-        baseline
-        if not _should_escalate(
-            baseline, request.sonnet_judgement, escalate_floor=settings.escalate_floor
-        )
-        else screener.screen(request, baseline=baseline)
-    )
+    if _should_escalate(baseline, request.sonnet_judgement, escalate_floor=settings.escalate_floor):
+        verdict = await screener.screen(request, baseline=baseline)
+    else:
+        verdict = baseline
     return verdict.model_copy(
         update={
             "version": __version__,

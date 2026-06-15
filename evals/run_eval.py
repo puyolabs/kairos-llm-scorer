@@ -26,6 +26,7 @@ Usage: uv run python -m evals.run_eval [--no-llm] [--limit N]
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import sys
@@ -147,8 +148,8 @@ def _metered_screener(usage: Usage):
         def __init__(self, inner) -> None:
             self._inner = inner
 
-        def parse(self, **kw):
-            resp = self._inner.parse(**kw)
+        async def parse(self, **kw):
+            resp = await self._inner.parse(**kw)
             usage.add(resp.usage)
             return resp
 
@@ -388,21 +389,33 @@ def main() -> None:
         # Force the chosen mode on every request so the run's cost is one explicit knob.
         screener = _metered_screener(usage)
         cache = {} if args.no_cache else _load_cache()
-        cache_hits = 0
-        for c in cases:
-            req = c.request.model_copy(update={"sonnet_judgement": args.judgement})
-            key = _cache_key(req, settings.scorer_model)
-            if not args.no_cache and key in cache:
-                llm.verdicts.append(Verdict.model_validate(cache[key]))
-                cache_hits += 1
-                continue
-            try:
-                verdict = score(req, screener=screener)
-                llm.verdicts.append(verdict)
-                cache[key] = verdict.model_dump(mode="json")  # only real calls get cached
-            except Exception as exc:  # one bad call shouldn't sink the whole run
-                print(f"  ! LLM failed on {c.id}: {exc}", file=sys.stderr)
-                llm.verdicts.append(None)
+
+        async def _run_llm() -> int:
+            """Score every escalating case under one event loop.
+
+            ``score()`` is async; running the whole sequential pass in a single
+            ``asyncio.run`` keeps the screener's cached ``AsyncAnthropic`` client
+            bound to one loop (per-call ``asyncio.run`` would reuse it across
+            closed loops). Returns the cache-hit count for the run summary.
+            """
+            hits = 0
+            for c in cases:
+                req = c.request.model_copy(update={"sonnet_judgement": args.judgement})
+                key = _cache_key(req, settings.scorer_model)
+                if not args.no_cache and key in cache:
+                    llm.verdicts.append(Verdict.model_validate(cache[key]))
+                    hits += 1
+                    continue
+                try:
+                    verdict = await score(req, screener=screener)
+                    llm.verdicts.append(verdict)
+                    cache[key] = verdict.model_dump(mode="json")  # only real calls get cached
+                except Exception as exc:  # one bad call shouldn't sink the whole run
+                    print(f"  ! LLM failed on {c.id}: {exc}", file=sys.stderr)
+                    llm.verdicts.append(None)
+            return hits
+
+        cache_hits = asyncio.run(_run_llm())
         if not args.no_cache:
             _save_cache(cache)
         if cache_hits:

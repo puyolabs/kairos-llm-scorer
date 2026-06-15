@@ -54,11 +54,12 @@ def health() -> dict[str, str]:
 
 
 @app.post("/score", response_model=Verdict, dependencies=[Depends(require_api_key)])
-def score_posting(request: ScoreRequest) -> Verdict:
+async def score_posting(request: ScoreRequest) -> Verdict:
     """Score one posting against the profile; guarded by ``require_api_key``.
 
     Delegates to the application ``score`` use case with the configured screener.
-    A ``RequestVocabularyError`` it raises becomes a 422 via the handler above;
-    the success body is the provenance-stamped ``Verdict``.
+    Async so the event loop stays free to serve other requests while an escalated
+    call awaits the LLM. A ``RequestVocabularyError`` it raises becomes a 422 via
+    the handler above; the success body is the provenance-stamped ``Verdict``.
     """
-    return score(request, screener=_screener)
+    return await score(request, screener=_screener)

@@ -22,3 +22,9 @@ def _scorer_config(tmp_path_factory):
     os.environ["KAIROS_CONFIG_DIR"] = str(d)
     cfg.get_scorer_tuning.cache_clear()
     yield
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run `@pytest.mark.anyio` tests on asyncio only (no trio dependency)."""
+    return "asyncio"
