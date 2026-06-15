@@ -16,6 +16,7 @@ from tests.fakes import FakeScreener
 from scorer import __version__, api
 from scorer.config import Settings, get_settings
 from scorer.domain.logic import SCORER_MODEL_SENTINEL
+from scorer.domain.models import Verdict
 
 # A minimal valid request that never escalates (judgement="off") — so the call
 # stays arithmetic-only and never reaches the (faked) screener's network path.
@@ -106,6 +107,31 @@ def test_score_returns_a_provenance_stamped_verdict(client):
     # Provenance is stamped on the way out (single-sourced in score()).
     assert body["version"] == __version__
     assert body["scorer"] == SCORER_MODEL_SENTINEL
+
+
+def test_score_escalates_through_the_async_handler(client, monkeypatch):
+    """`wide` + a forced-apply baseline drives /score through the real async chain
+    (handler → `await score()` → `await screener.screen()`). Every other API test
+    uses judgement="off", so this is the only one that exercises the await path at
+    the ASGI boundary; the refined verdict, not the baseline, must surface."""
+    api.app.dependency_overrides[get_settings] = _with_keys("")  # auth off
+    # Thresholds at 0 put any baseline in the apply band ⇒ wide always escalates.
+    # The `application` package re-exports the `score` function, shadowing the
+    # submodule, so reach the real module via sys.modules to patch its globals.
+    import importlib
+
+    score_mod = importlib.import_module("scorer.application.score")
+    forced = Settings().model_copy(update={"apply_threshold": 0, "maybe_threshold": 0})
+    monkeypatch.setattr(score_mod, "get_settings", lambda: forced)
+    refined = Verdict(decision="skip", match_score=7, reasoning="refined by screener")
+    monkeypatch.setattr(api, "_screener", FakeScreener(refined))
+
+    body = client.post("/score", json={**_REQUEST, "sonnet_judgement": "wide"}).json()
+
+    assert body["decision"] == "skip"
+    assert body["match_score"] == 7
+    assert body["reasoning"] == "refined by screener"
+    assert body["version"] == __version__  # provenance still stamped on the way out
 
 
 def test_unconfigured_vocabulary_returns_422_with_violations(client):
