@@ -48,11 +48,16 @@ while read -r _old new ref; do
   git --git-dir="$GIT_DIR" --work-tree="$WORK" checkout -f "$branch"
   cd "$WORK"
 
+  # --env-file .env: the scorer's secret-bearing vars (ANTHROPIC_API_KEY,
+  # KAIROS_SCORER_API_KEYS) are interpolated in the INCLUDED base.yml. Compose's
+  # auto-.env loading keys off the compose file's dir AND scopes per included
+  # file, so it never finds the repo-root .env. Passing it explicitly puts the
+  # values in the process env, which every included file's interpolation sees.
   echo ">> building image"
-  docker compose -f "$COMPOSE" build
+  docker compose --env-file .env -f "$COMPOSE" build
 
   echo ">> starting stack (waiting on /health)"
-  docker compose -f "$COMPOSE" up -d --wait
+  docker compose --env-file .env -f "$COMPOSE" up -d --wait
 
   # Deliver this project's route fragment to the shared edge and reload it.
   if [ -d "$HOME/edge/conf.d" ]; then
