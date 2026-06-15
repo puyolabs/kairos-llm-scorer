@@ -16,9 +16,6 @@ build/
 config/screener.xml
 config/scorer.toml
 
-# uv
-uv.lock
-
 # Eval verdict cache (local LLM-call replay)
 evals/.eval_cache*.json
 
