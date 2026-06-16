@@ -15,10 +15,12 @@ from scorer.domain.models import (
     Contract,
     GatePreferences,
     Job,
+    LedgerEntry,
     Posting,
     Preferences,
     Profile,
     ScoreRequest,
+    SemanticTag,
     Verdict,
 )
 
@@ -263,6 +265,23 @@ def test_salary_currency_length_rejected(currency):
 def test_contract_hours_per_week_must_be_positive(hours):
     with pytest.raises(ValidationError):
         _POSTING.validate_python(_contract(hours_per_week_hint=hours))
+
+
+# ── 4b. SemanticTag.vector positive-dimension guard ─────────────────────────
+# The real guard against a dim-0 embedding: ScoreRequest's validator only checks
+# dimension *consistency* (all-empty vectors share dim 0 and would pass), so this
+# field constraint is what rejects [] outright.
+
+
+def test_semantic_tag_rejects_empty_vector():
+    with pytest.raises(ValidationError):
+        SemanticTag(tag="t", gloss="g", vector=[])
+
+
+def test_ledger_entry_rejects_empty_vector():
+    # LedgerEntry subclasses SemanticTag, so it inherits the min_length=1 guard.
+    with pytest.raises(ValidationError):
+        LedgerEntry(tag="t", tier="core", gloss="g", vector=[])
 
 
 # ── 5. real-posting round-trip ──────────────────────────────────────────────

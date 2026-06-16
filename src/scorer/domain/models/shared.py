@@ -23,4 +23,4 @@ class SemanticTag(BaseModel):
 
     tag: str = Field(description="Canonical identifier for the concept")
     gloss: str = Field(description="Text that was embedded to produce `vector`")
-    vector: list[float] = Field(description="Pre-computed embedding of `gloss`")
+    vector: list[float] = Field(min_length=1, description="Pre-computed embedding of `gloss`")

@@ -33,12 +33,15 @@ variable "desired_count" {
 
 variable "cpu" {
   type    = number
-  default = 256 # Fargate task CPU units (.25 vCPU)
+  default = 512 # Fargate task CPU units (.5 vCPU). The handler is GIL-bound to ~1
+  # core, so this caps the deterministic burst but is ample for the live LLM path
+  # (each request mostly waits on Anthropic, ~0 CPU). Raise for bulk batch scoring.
 }
 
 variable "memory" {
   type    = number
-  default = 512 # Fargate task memory (MiB)
+  default = 1024 # Fargate task memory (MiB). 1 GB is the minimum legal pairing for
+  # .5 vCPU; observed peak RSS is ~170 MiB, so this is generous headroom.
 }
 
 variable "scorer_model" {
@@ -124,6 +127,10 @@ data "aws_subnets" "default" {
 resource "aws_ecr_repository" "app" {
   name                 = local.name
   image_tag_mutability = "MUTABLE"
+
+  # Allow `terraform destroy` to delete the repo even when it still holds pushed
+  # images — otherwise teardown fails with RepositoryNotEmptyException.
+  force_delete = true
 
   image_scanning_configuration {
     scan_on_push = true

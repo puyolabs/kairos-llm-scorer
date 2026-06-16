@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from ..models import (
     Decision,
     Remote,
@@ -25,7 +27,7 @@ from ..models import (
 )
 from .gate import gate_factors
 from .tuning import ScorerTuning
-from .vec import _closeness_weight, _cosine
+from .vec import closeness_weights, cosine_matrix
 
 # Identifies scores produced by this arithmetic path (vs. an LLM model id).
 SCORER_MODEL_SENTINEL = "kairos-arithmetic-v3"
@@ -111,7 +113,7 @@ def _domain_score(
     candidate_vecs = [e.vector for e in candidate_domains]
     if not posting_vecs or not candidate_vecs:
         return tuning.domain_transferable, "transferable"
-    sim = max(_cosine(p, c) for p in posting_vecs for c in candidate_vecs)
+    sim = float(cosine_matrix(posting_vecs, candidate_vecs).max())
     if sim >= tuning.domain_direct_sim:
         return tuning.domain_direct, "direct"
     if sim <= tuning.domain_mismatch_sim:
@@ -170,9 +172,19 @@ def deterministic_score(
 
     technical = tuning.no_abilities_t
     if abilities:
+        if ledger:
+            sims = cosine_matrix(
+                [ability.vector for ability in abilities],
+                [row.vector for row in ledger],
+            )
+            tier_credit_vec = np.array([tuning.tier_credit[row.tier] for row in ledger])
+            related_per_ability = (closeness_weights(sims, tuning) * tier_credit_vec).max(axis=1)
+        else:
+            related_per_ability = np.zeros(len(abilities))
+
         weighted_credit = 0.0
         total_weight = 0.0
-        for ability in abilities:
+        for ability, related_raw in zip(abilities, related_per_ability, strict=True):
             weight = max(1, 26 - ability.ordinal)
             name = ability.tag
 
@@ -183,12 +195,7 @@ def deterministic_score(
                     c = tuning.tier_credit[row.tier]
                     exact_credit = c if exact_credit is None else max(exact_credit, c)
 
-            related_credit: float | None = None
-            for row in ledger:
-                w = _closeness_weight(_cosine(ability.vector, row.vector), tuning)
-                if w > 0.0:
-                    c = w * tuning.tier_credit[row.tier]
-                    related_credit = c if related_credit is None else max(related_credit, c)
+            related_credit: float | None = float(related_raw) if related_raw > 0.0 else None
 
             if exact_credit is not None:
                 matched_names.append(name)

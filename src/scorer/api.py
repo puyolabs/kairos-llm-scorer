@@ -13,7 +13,9 @@ tests swap it by patching ``_screener``.
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from . import __version__
 from .application.score import score
@@ -44,6 +46,22 @@ def _vocabulary_error_handler(_request: Request, exc: RequestVocabularyError) ->
     )
 
 
+@app.exception_handler(ValidationError)
+def _validation_error_handler(_request: Request, exc: ValidationError) -> JSONResponse:
+    """Map a pydantic ``ValidationError`` to FastAPI's default 422 shape.
+
+    ``/score`` parses its body by hand with ``model_validate_json`` (see below) to
+    skip FastAPI's slower ``json.loads`` + ``model_validate`` two-step, which means
+    its built-in ``RequestValidationError`` handler no longer fires for this route.
+    Reproducing the ``{"detail": [...]}`` body here keeps the wire contract identical
+    for malformed JSON, missing fields, and the dimension-uniformity check.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors(include_url=False))},
+    )
+
+
 _screener: ScreenerPort = AnthropicScreener()
 
 
@@ -53,12 +71,33 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/score", response_model=Verdict, dependencies=[Depends(require_api_key)])
-def score_posting(request: ScoreRequest) -> Verdict:
+@app.post(
+    "/score",
+    response_model=Verdict,
+    dependencies=[Depends(require_api_key)],
+    openapi_extra={
+        "requestBody": {
+            "content": {"application/json": {"schema": ScoreRequest.model_json_schema()}},
+            "required": True,
+        }
+    },
+)
+async def score_posting(http_request: Request) -> Verdict:
     """Score one posting against the profile; guarded by ``require_api_key``.
 
+    The body is parsed by hand with ``ScoreRequest.model_validate_json`` — pydantic
+    -core's fused jiter (Rust) parse+validate — instead of FastAPI's default
+    ``json.loads`` + ``model_validate``, which built throwaway Python float graphs for
+    the ~22k embedding floats before validating. ``require_api_key`` stays a
+    dependency so it short-circuits *before* this handler reads the ~360 KB body, and
+    ``openapi_extra`` preserves the ``ScoreRequest`` schema in ``/docs``.
+
     Delegates to the application ``score`` use case with the configured screener.
-    A ``RequestVocabularyError`` it raises becomes a 422 via the handler above;
-    the success body is the provenance-stamped ``Verdict``.
+    Async so the event loop stays free to serve other requests while an escalated
+    call awaits the LLM. A ``ValidationError`` (malformed JSON, bad fields, or a
+    dimension mismatch) becomes a 422 via the handler above, as does a
+    ``RequestVocabularyError`` raised in ``score``; the success body is the
+    provenance-stamped ``Verdict``.
     """
-    return score(request, screener=_screener)
+    request = ScoreRequest.model_validate_json(await http_request.body())
+    return await score(request, screener=_screener)

@@ -37,7 +37,7 @@ class FakeScreener:
     def call_count(self) -> int:
         return len(self.calls)
 
-    def screen(self, request: ScoreRequest, *, baseline: Verdict) -> Verdict:
+    async def screen(self, request: ScoreRequest, *, baseline: Verdict) -> Verdict:
         self.calls.append((request, baseline))
         if self._responder is not None:
             return self._responder(request, baseline)

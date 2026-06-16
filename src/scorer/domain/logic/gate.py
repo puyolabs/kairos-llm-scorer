@@ -27,7 +27,7 @@ from ..models import (
 )
 from .eligibility import eligibility_allows
 from .tuning import ScorerTuning
-from .vec import _cosine
+from .vec import cosine_matrix
 
 
 def work_arrangement_from_remote(
@@ -125,7 +125,7 @@ def gate_factors(
     elif not allowed_role_vecs:
         f_role_family = 0
     else:
-        sim = max(_cosine(p, a) for p in posting_role_vecs for a in allowed_role_vecs)
+        sim = float(cosine_matrix(posting_role_vecs, allowed_role_vecs).max())
         f_role_family = 1 if sim >= tuning.role_gate_sim else 0
 
     f_salary = (

@@ -29,6 +29,19 @@ services:
       KAIROS_SCORER_MODEL: ${KAIROS_SCORER_MODEL:-claude-sonnet-4-6}
       KAIROS_SCORER_EFFORT: ${KAIROS_SCORER_EFFORT:-medium}
       KAIROS_BUILD_SHA: ${KAIROS_BUILD_SHA:-dev}
+    # Standardized to .5 vCPU / 1GiB to match the Fargate task (cloud/main.tf) and
+    # k8s manifest. The handler is GIL-bound to ~1 core, so .5 vCPU caps the
+    # deterministic burst but is ample for the LLM-I/O-bound live path; 1GiB is
+    # generous vs the ~170 MiB observed peak RSS. `docker compose up` (v2) honors
+    # deploy.resources outside Swarm. Raise cpus for bulk deterministic batch runs.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 512M
     # /health is unauthenticated by design, so it doubles as the container probe.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]

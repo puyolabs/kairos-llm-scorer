@@ -15,7 +15,7 @@ is best-effort and never allowed to break the screen call.
 
 from __future__ import annotations
 
-from anthropic import Anthropic, AnthropicError
+from anthropic import AnthropicError, AsyncAnthropic
 from anthropic.types import MessageParam, OutputConfigParam
 
 from ....config import get_scorer_tuning, get_settings
@@ -27,7 +27,7 @@ from ..prompt import ScreenerPromptAdapter
 _EFFORT_SUPPORT: dict[str, bool] = {}
 
 
-def _supports_effort(client: Anthropic, model: str, effort: str) -> bool:
+async def _supports_effort(client: AsyncAnthropic, model: str, effort: str) -> bool:
     """Best-effort probe: does ``model`` advertise the requested ``effort`` level?
 
     Caches the answer per model. Only the network lookup can fail (caught and
@@ -44,7 +44,7 @@ def _supports_effort(client: Anthropic, model: str, effort: str) -> bool:
     if cached is not None:
         return cached
     try:
-        capabilities = client.models.retrieve(model).capabilities
+        capabilities = (await client.models.retrieve(model)).capabilities
     except AnthropicError:
         return False
     caps = capabilities.model_dump() if hasattr(capabilities, "model_dump") else capabilities
@@ -70,9 +70,9 @@ class AnthropicScreener:
 
     def __init__(self, prompt: ScreenerPromptAdapter | None = None) -> None:
         self._prompt = prompt or ScreenerPromptAdapter()
-        self._client: Anthropic | None = None
+        self._client: AsyncAnthropic | None = None
 
-    def _get_client(self) -> Anthropic:
+    def _get_client(self) -> AsyncAnthropic:
         """Return the cached Anthropic client, constructing it on first use.
 
         Deferred so importing the module (and constructing the screener at API
@@ -80,10 +80,10 @@ class AnthropicScreener:
         """
         client = self._client
         if client is None:
-            client = self._client = Anthropic(api_key=get_settings().anthropic_api_key or None)
+            client = self._client = AsyncAnthropic(api_key=get_settings().anthropic_api_key or None)
         return client
 
-    def screen(self, request: ScoreRequest, *, baseline: Verdict) -> Verdict:
+    async def screen(self, request: ScoreRequest, *, baseline: Verdict) -> Verdict:
         """Call the model to produce a refined ``Verdict`` from the baseline.
 
         Builds the cached system blocks and the user turn, sends the request with
@@ -121,9 +121,9 @@ class AnthropicScreener:
             "messages": messages,
             "output_format": Verdict,
         }
-        if _supports_effort(client, settings.scorer_model, settings.scorer_effort):
+        if await _supports_effort(client, settings.scorer_model, settings.scorer_effort):
             params["output_config"] = OutputConfigParam(effort=settings.scorer_effort)
-        resp = client.messages.parse(**params)
+        resp = await client.messages.parse(**params)
         verdict = resp.parsed_output
         if verdict is None:
             raise RuntimeError(

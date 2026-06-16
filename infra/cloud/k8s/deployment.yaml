@@ -66,13 +66,17 @@ spec:
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 20
+          # Standardized to .5 vCPU / 1Gi to match the Fargate task (main.tf) and
+          # the Compose deploy limits. The handler is GIL-bound to ~1 core; .5 vCPU
+          # is ample for the LLM-I/O-bound live path (raise for bulk deterministic
+          # batch scoring). 1Gi is generous vs the ~170 MiB observed peak RSS.
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 250m
+              memory: 512Mi
             limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
 ---
 apiVersion: v1
 kind: Service

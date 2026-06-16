@@ -22,13 +22,14 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=0 \
     PYTHONUNBUFFERED=1
 
-# uv.lock is gitignored in this repo, so the build resolves from pyproject.toml
-# (no --frozen). README.md is referenced by pyproject's `readme`, so it must be
+# uv.lock is committed, so the build is reproducible: --frozen installs the locked
+# versions exactly and fails if the lock is stale vs pyproject.toml (run `uv lock`
+# to refresh). README.md is referenced by pyproject's `readme`, so it must be
 # present for the build to succeed.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY config ./config
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 

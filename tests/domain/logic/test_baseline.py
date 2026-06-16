@@ -11,13 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import scorer.config as cfg
 from scorer.config import load_scorer_tuning
 from scorer.domain.logic.baseline import (
-    _closeness_weight,
-    _cosine,
     _domain_score,
     _round_half_up,
     _tier_fit,
@@ -25,6 +24,7 @@ from scorer.domain.logic.baseline import (
     clamp01,
     deterministic_score,
 )
+from scorer.domain.logic.vec import closeness_weights, cosine_matrix
 from scorer.domain.models import ScoreRequest, SemanticTag, SeniorityHint
 
 # Load tuning from the committed example so the suite runs without the gitignored
@@ -355,36 +355,49 @@ def test_salary_below_floor_is_flagged():
         ([1.0, 2.0, 2.0], [2.0, 4.0, 4.0], 1.0),  # scale-invariant
     ],
 )
-def test_cosine(a, b, expected):
-    assert _cosine(a, b) == pytest.approx(expected)
+def test_cosine_matrix_single_pair(a, b, expected):
+    # 1×1 matrix: the (0, 0) entry is the cosine of the lone pair.
+    assert cosine_matrix([a], [b])[0, 0] == pytest.approx(expected)
 
 
-@pytest.mark.parametrize(
-    "a,b",
-    [
-        ([1.0, 0.0], [1.0]),  # length mismatch ⇒ no match
-        ([0.0, 0.0], [1.0, 0.0]),  # zero vector ⇒ no match (no NaN)
-    ],
-)
-def test_cosine_degenerate_returns_zero(a, b):
-    assert _cosine(a, b) == 0.0
+def test_cosine_matrix_zero_vector_returns_zero():
+    # A zero-magnitude row yields 0.0 (treated as unrelated), never NaN.
+    assert cosine_matrix([[0.0, 0.0]], [[1.0, 0.0]])[0, 0] == 0.0
+
+
+def test_cosine_matrix_all_pairs_shape_and_values():
+    # M×N cross product: every (i, j) is the cosine of rows[i] vs cols[j].
+    rows = [[1.0, 0.0], [0.0, 1.0]]
+    cols = [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]]
+    m = cosine_matrix(rows, cols)
+    assert m.shape == (2, 3)
+    assert m[0, 0] == pytest.approx(1.0)  # parallel
+    assert m[0, 1] == pytest.approx(-1.0)  # opposite
+    assert m[1, 2] == pytest.approx(1.0)  # parallel on the other axis
+
+
+@pytest.mark.parametrize("rows,cols", [([], [[1.0]]), ([[1.0]], [])])
+def test_cosine_matrix_empty_side(rows, cols):
+    # An empty side yields an empty result with no error (callers guard before max()).
+    assert cosine_matrix(rows, cols).size == 0
 
 
 # ── 8. closeness weight — the relatedness band ──────────────────────────────
 
 
-def test_closeness_weight_saturates_and_floors():
+def test_closeness_weights_saturates_and_floors():
     # exact_sim=0.95, related_sim_floor=0.75 in the example tuning.
-    assert _closeness_weight(0.99, TUNING) == 1.0  # ≥ exact ⇒ full credit
-    assert _closeness_weight(0.95, TUNING) == 1.0  # at exact boundary
-    assert _closeness_weight(0.75, TUNING) == 0.0  # at floor boundary
-    assert _closeness_weight(0.5, TUNING) == 0.0  # below floor ⇒ no relatedness
+    w = closeness_weights(np.array([0.99, 0.95, 0.75, 0.5]), TUNING)
+    assert w[0] == 1.0  # ≥ exact ⇒ full credit
+    assert w[1] == 1.0  # at exact boundary
+    assert w[2] == 0.0  # at floor boundary
+    assert w[3] == 0.0  # below floor ⇒ no relatedness
 
 
-def test_closeness_weight_is_linear_between():
-    # Midpoint of [0.75, 0.95] ⇒ 0.5.
+def test_closeness_weights_linear_between():
+    # Midpoint of [0.75, 0.95] ⇒ 0.5; applied elementwise across an array.
     mid = (TUNING.related_sim_floor + TUNING.exact_sim) / 2
-    assert _closeness_weight(mid, TUNING) == pytest.approx(0.5)
+    assert closeness_weights(np.array([mid]), TUNING)[0] == pytest.approx(0.5)
 
 
 # ── 9. vector relatedness in the technical axis ─────────────────────────────
