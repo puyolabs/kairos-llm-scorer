@@ -10,15 +10,21 @@
 #
 # One-time host setup (see infra/README.md):
 #   git init --bare ~/kairos-llm-scorer.git && install this hook
-#   docker network create edge   # if not already created by another project
 #   drop the IP screener.xml + a .env (ANTHROPIC_API_KEY, KAIROS_SCORER_API_KEYS)
 #     into ~/kairos-llm-scorer once — `checkout -f` won't delete them.
+#
+# The scorer is a PURELY INTERNAL service. It joins the dedicated
+# private `kairos-scorer` network (OWNED by kairos — the owner creates it; this repo
+# is a MEMBER and neither creates the network nor delivers any Janus fragment) and
+# gets NO Janus ingress. This hook therefore neither creates a network nor installs a
+# route fragment — and it REMOVES any stale scorer fragments left on the Janus host
+# by an earlier edge-served topology.
 #
 # Flow on each push to TARGET:
 #   1. checkout the branch into $WORK
 #   2. docker compose build
 #   3. docker compose up -d --wait   (block until the /health healthcheck passes)
-#   4. deliver the edge route fragment + reload the shared edge
+#   4. remove any stale scorer Janus fragments + reload the Janus gateway
 
 set -euo pipefail
 # Branch this host deploys. Each host tracks ONE environment — set
@@ -56,15 +62,25 @@ while read -r _old new ref; do
   echo ">> building image"
   docker compose --env-file .env -f "$COMPOSE" build
 
+  # --remove-orphans clears containers for services no longer in the compose file
+  # — e.g. the retired inner `nginx`/`caddy` proxy, which would otherwise linger
+  # holding a stale network alias.
   echo ">> starting stack (waiting on /health)"
-  docker compose --env-file .env -f "$COMPOSE" up -d --wait
+  docker compose --env-file .env -f "$COMPOSE" up -d --wait --remove-orphans
 
-  # Deliver this project's route fragment to the shared edge and reload it.
-  if [ -d "$HOME/edge/conf.d" ]; then
-    echo ">> updating shared edge fragment"
-    cp infra/local/cluster/edge/kairos-llm-scorer.caddy "$HOME/edge/conf.d/kairos-llm-scorer.caddy"
-    docker exec edge caddy reload --config /etc/caddy/Caddyfile \
-      || echo ">> WARN: edge reload failed (is the edge up?)"
+  # The scorer has NO Janus ingress. It is reached only by the kairos worker over
+  # the private `kairos-scorer` network. This hook installs NO route fragment;
+  # instead it REMOVES any stale scorer fragments a previous edge-served deploy
+  # left on the Janus host, then reloads nginx via /reload-janus.sh (re-render +
+  # `nginx -t` + reload — a bad config fails the test and never goes hot, so the
+  # running config survives).
+  if [ -d "$HOME/janus/conf.d" ]; then
+    echo ">> removing stale scorer Janus fragments (scorer has no edge ingress)"
+    rm -f "$HOME/janus/conf.d/kairos-llm-scorer.conf" \
+          "$HOME/janus/conf.d/kairos-llm-scorer.caddy" \
+          "$HOME/janus/http.d/kairos-llm-scorer.zones.conf"
+    docker exec janus /reload-janus.sh \
+      || echo ">> WARN: Janus reload failed (is Janus up?)"
   fi
 
   docker image prune -f >/dev/null 2>&1 || true
