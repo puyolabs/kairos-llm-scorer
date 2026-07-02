@@ -200,11 +200,21 @@ async def test_score_escalation_routing(
         _, passed_baseline = fake.calls[0]
         assert passed_baseline.decision == band
         assert passed_baseline.match_score == baseline_score
+        # The LLM led, so the result is labelled "llm" and retains both grades:
+        # the surfaced screener verdict and the deterministic baseline it overturned.
+        assert verdict.method == "llm"
+        assert verdict.baseline is not None
+        assert verdict.baseline.decision == band
+        assert verdict.baseline.match_score == baseline_score
     else:
         assert fake.call_count == 0
         # Untouched arithmetic verdict surfaces with its real band.
         assert verdict.decision == band
         assert verdict.match_score == baseline_score
+        # The baseline is final: labelled "deterministic", no separate baseline
+        # snapshot (the surfaced verdict *is* the baseline).
+        assert verdict.method == "deterministic"
+        assert verdict.baseline is None
 
 
 @pytest.mark.anyio

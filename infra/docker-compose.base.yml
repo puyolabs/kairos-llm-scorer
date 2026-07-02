@@ -2,8 +2,9 @@
 # Base stack — the scorer service alone, shared by both local topologies.
 #
 # Not run directly. Each topology under infra/local/<topology>/docker-compose.yml
-# `include`s this file and adds its own edge (a Caddy that owns host ports in
-# standalone, or one that joins the shared `edge` network in cluster). Relative
+# `include`s this file. Standalone adds its own Caddy edge (owns host ports);
+# cluster adds NO edge — it attaches the scorer to the private `kairos-scorer`
+# network as an internal-only service (no host ports, no Janus ingress). Relative
 # paths here resolve from THIS file's dir (infra/), so the build context is the
 # repo root regardless of which topology includes it.
 #

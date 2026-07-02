@@ -22,7 +22,7 @@ from .application.score import score
 from .application.screener_port import ScreenerPort
 from .auth import require_api_key
 from .domain.logic import RequestVocabularyError
-from .domain.models import ScoreRequest, Verdict
+from .domain.models import ScoreRequest, ScoreResult
 from .infrastructure import AnthropicScreener
 
 app = FastAPI(title="kairos-llm-scorer", version=__version__)
@@ -73,7 +73,7 @@ def health() -> dict[str, str]:
 
 @app.post(
     "/score",
-    response_model=Verdict,
+    response_model=ScoreResult,
     dependencies=[Depends(require_api_key)],
     openapi_extra={
         "requestBody": {
@@ -82,7 +82,7 @@ def health() -> dict[str, str]:
         }
     },
 )
-async def score_posting(http_request: Request) -> Verdict:
+async def score_posting(http_request: Request) -> ScoreResult:
     """Score one posting against the profile; guarded by ``require_api_key``.
 
     The body is parsed by hand with ``ScoreRequest.model_validate_json`` — pydantic
@@ -97,7 +97,8 @@ async def score_posting(http_request: Request) -> Verdict:
     call awaits the LLM. A ``ValidationError`` (malformed JSON, bad fields, or a
     dimension mismatch) becomes a 422 via the handler above, as does a
     ``RequestVocabularyError`` raised in ``score``; the success body is the
-    provenance-stamped ``Verdict``.
+    provenance-stamped ``ScoreResult`` (the verdict plus ``method`` and, when the
+    LLM led, the retained deterministic ``baseline``).
     """
     request = ScoreRequest.model_validate_json(await http_request.body())
     return await score(request, screener=_screener)

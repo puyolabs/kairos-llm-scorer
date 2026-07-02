@@ -19,7 +19,7 @@ from ..domain.logic import (
     deterministic_score,
     validate_request_vocabulary,
 )
-from ..domain.models import ScoreRequest, SonnetJudgement, Verdict
+from ..domain.models import Baseline, ScoreRequest, ScoreResult, SonnetJudgement, Verdict
 from .screener_port import ScreenerPort
 
 
@@ -41,14 +41,20 @@ def _should_escalate(baseline: Verdict, judgement: SonnetJudgement, *, escalate_
     return baseline.decision in ("maybe", "apply") or baseline.match_score >= escalate_floor
 
 
-async def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
-    """Score a request end to end and return the provenance-stamped verdict.
+async def score(request: ScoreRequest, *, screener: ScreenerPort) -> ScoreResult:
+    """Score a request end to end and return the provenance-stamped result.
 
     Validates the request vocabulary (raising on unconfigured values), computes
     the deterministic baseline, then escalates to ``screener`` iff
     ``_should_escalate`` says so. The surfaced verdict — baseline or screener — is
-    copied with the canonical provenance fields stamped, so those are
-    single-sourced here rather than trusted from either stage.
+    wrapped in a ``ScoreResult`` with the canonical provenance fields stamped, so
+    those are single-sourced here rather than trusted from either stage.
+
+    The result also records *which* stage led (``method``) and, when the LLM
+    overturned the arithmetic verdict, retains the deterministic ``baseline`` so
+    the caller can label the two grades and show both. When the baseline is final,
+    ``method`` is ``"deterministic"`` and ``baseline`` is ``None`` (the surfaced
+    verdict *is* the baseline — no need to duplicate it).
 
     Async because escalation is a network round-trip: awaiting the screener frees
     the event loop to serve other requests during the multi-second LLM call. The
@@ -59,7 +65,8 @@ async def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
         screener: The LLM port invoked when the baseline escalates.
 
     Returns:
-        The final ``Verdict`` with version / build_sha / scorer stamped.
+        The final ``ScoreResult`` with version / build_sha / scorer / method
+        stamped, plus the deterministic ``baseline`` when the LLM led.
 
     Raises:
         RequestVocabularyError: If the request carries unconfigured vocabulary.
@@ -75,12 +82,17 @@ async def score(request: ScoreRequest, *, screener: ScreenerPort) -> Verdict:
     )
     if _should_escalate(baseline, request.sonnet_judgement, escalate_floor=settings.escalate_floor):
         verdict = await screener.screen(request, baseline=baseline)
+        method = "llm"
+        retained = Baseline(**baseline.model_dump(include=set(Baseline.model_fields)))
     else:
         verdict = baseline
-    return verdict.model_copy(
-        update={
-            "version": __version__,
-            "build_sha": settings.build_sha,
-            "scorer": SCORER_MODEL_SENTINEL,
-        }
+        method = "deterministic"
+        retained = None
+    return ScoreResult(
+        **verdict.model_dump(exclude={"version", "build_sha", "scorer"}),
+        version=__version__,
+        build_sha=settings.build_sha,
+        scorer=SCORER_MODEL_SENTINEL,
+        method=method,
+        baseline=retained,
     )

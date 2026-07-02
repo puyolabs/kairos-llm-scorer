@@ -107,6 +107,9 @@ def test_score_returns_a_provenance_stamped_verdict(client):
     # Provenance is stamped on the way out (single-sourced in score()).
     assert body["version"] == __version__
     assert body["scorer"] == SCORER_MODEL_SENTINEL
+    # judgement="off" never escalates ⇒ deterministic lead, no baseline snapshot.
+    assert body["method"] == "deterministic"
+    assert body["baseline"] is None
 
 
 def test_score_escalates_through_the_async_handler(client, monkeypatch):
@@ -132,6 +135,12 @@ def test_score_escalates_through_the_async_handler(client, monkeypatch):
     assert body["match_score"] == 7
     assert body["reasoning"] == "refined by screener"
     assert body["version"] == __version__  # provenance still stamped on the way out
+    # The wire response labels the LLM lead and carries both grades: the surfaced
+    # screener verdict (skip/7) and the deterministic baseline it overturned.
+    assert body["method"] == "llm"
+    assert body["baseline"] is not None
+    assert body["baseline"]["decision"] in {"apply", "maybe", "skip"}
+    assert body["baseline"]["match_score"] != 7  # the arithmetic score, not the LLM's
 
 
 def test_unconfigured_vocabulary_returns_422_with_violations(client):

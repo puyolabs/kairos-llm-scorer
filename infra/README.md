@@ -16,15 +16,15 @@ infra/
     ├── standalone/                #   this host owns :80/:443 (own Caddy)
     │   ├── docker-compose.yml
     │   └── Caddyfile
-    └── cluster/                   #   shared host behind a shared edge proxy
+    └── cluster/                   #   shared host; scorer is internal-only
         ├── docker-compose.yml
-        ├── Caddyfile
-        ├── post-receive.sh        #   git-push deploy hook
-        └── edge/kairos-llm-scorer.caddy
+        └── post-receive.sh        #   git-push deploy hook
 ```
 
 Each `local/<topology>/docker-compose.yml` is self-contained — it `include`s
-`../../docker-compose.base.yml` for the scorer service and adds its own Caddy.
+`../../docker-compose.base.yml` for the scorer service. Standalone adds its own
+Caddy edge; cluster adds **no** edge — the scorer is internal-only, reached over a
+private network by the kairos worker (see below).
 Run one with `docker compose -f infra/local/<topology>/docker-compose.yml …`.
 
 ## Auth
@@ -36,8 +36,8 @@ separated **in the app**, not just at the edge:
 - non-empty (comma-separated) → `POST /score` requires a matching key via
   `Authorization: Bearer <key>` or `X-API-Key`; otherwise **401**. `/health` stays open.
 
-Set it before any public surface is unblocked. The shared edge's `public_gate` is
-a separate, coarse all-or-nothing block; this is the per-call check.
+Set it before any public surface is unblocked. The Janus gateway's `public_gate`
+is a separate, coarse all-or-nothing block; this is the per-call check.
 
 ## Provisioned config (IP / tuning)
 
@@ -73,16 +73,21 @@ Set `SCORER_SITE_ADDRESS=scorer.example.com` (a bare domain) for automatic HTTPS
 ## local / cluster
 
 Mirrors kairos: push to a bare repo, a `post-receive` hook builds + brings up the
-stack and registers the edge route. The shared edge proxy (`~/edge`) owns :80/:443 and
-routes `scorer.cluster.lan` (LAN) and `scorer.example.com` (public, via an
-outbound tunnel) to this stack's inner Caddy alias `kairos-llm-scorer-inner`.
+stack. The scorer is a **purely internal** service — it
+has **no** Janus ingress (no public, no LAN surface) and no inner proxy. It is
+reached only by the kairos worker, server-to-server, over the dedicated private
+`kairos-scorer` network with the stable alias `kairos-llm-scorer`.
+
+This repo is a **member** of the `kairos-scorer` network (kairos is the owner), so
+it joins the existing `kairos-scorer` network as `external: true` — it does not
+create it. The scorer no longer joins `eco-kairos` or any shared edge network.
 
 **One-time host setup**
 
 ```bash
 ssh cluster-host
 git init --bare ~/kairos-llm-scorer.git
-docker network create edge          # no-op if another project already made it
+# the kairos-scorer network is created by its owner (kairos), not here
 # install the hook:
 #   scp infra/local/cluster/post-receive.sh cluster-host:~/kairos-llm-scorer.git/hooks/post-receive
 chmod +x ~/kairos-llm-scorer.git/hooks/post-receive
@@ -102,11 +107,13 @@ git remote add cluster cluster-host:kairos-llm-scorer.git   # once
 git push cluster stg   # the branch this host tracks (SCORER_DEPLOY_BRANCH: prd|stg|lab)
 ```
 
-The hook builds, waits on `/health`, copies
-`infra/local/cluster/edge/kairos-llm-scorer.caddy` into `~/edge/conf.d/`, and
-reloads the edge. Going public is an edge concern: bring up its tunnel daemon
-(`public` profile) and keep `scorer.example.com` out of `EDGE_PUBLIC_BLOCK`.
-Do that **only after** `KAIROS_SCORER_API_KEYS` is set.
+The hook builds, waits on `/health`, and brings the stack up on the private
+`kairos-scorer` network. It installs **no** Janus route (the scorer has no edge
+ingress); instead it **removes** any stale scorer fragments a previous edge-served
+deploy left on the Janus host (`~/janus/conf.d/kairos-llm-scorer.conf`,
+`~/janus/http.d/kairos-llm-scorer.zones.conf`) and reloads Janus. Access is
+worker-to-scorer over the private network only; there is no public surface to
+unblock. The in-app `KAIROS_SCORER_API_KEYS` gate still applies to `POST /score`.
 
 ## cloud / AWS Fargate (`cloud/main.tf`)
 
