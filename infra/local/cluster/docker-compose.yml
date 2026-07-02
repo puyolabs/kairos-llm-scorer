@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
-# Local topology — CLUSTER (multi-project host, shared edge proxy).
+# Local topology — CLUSTER (multi-project host, Janus gateway).
 #
 #   docker compose -f infra/local/cluster/docker-compose.yml up -d --wait
 #
-# The host-level shared edge Caddy owns :80/:443 and fans out by Host header to
-# each project's inner Caddy over the shared external `edge` network. This stack
-# binds NO host ports — it only joins `edge` with the stable alias `kairos-llm-scorer-inner`,
-# so it can never collide with a sibling project (e.g. kairos). The edge fragment
-# ./edge/kairos-llm-scorer.caddy maps the scorer hostnames to this alias.
+# The cluster is a SINGLE nginx edge (Janus). The scorer is a
+# PURELY INTERNAL service — only the kairos worker calls it (server-to-server) over
+# the dedicated private `kairos-scorer` network. The scorer gets NO Janus ingress at
+# all (no public, no LAN surface), so there is no inner proxy and no route fragment.
+# This stack binds NO host ports. The scorer joins `kairos-scorer` with the stable
+# alias `kairos-llm-scorer` so the kairos worker can reach it by that name.
+#
+# `kairos-scorer` is OWNED by kairos (kairos creates it); this repo is a MEMBER and
+# joins it as `external: true` — it does NOT create the network.
 name: kairos-llm-scorer
 
 # Pull in the shared scorer service. Its relative paths resolve from infra/.
@@ -15,23 +19,20 @@ include:
   - ../../docker-compose.base.yml
 
 services:
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  # Extend the scorer service from base.yml: attach it to the dedicated kairos ↔
+  # scorer private network with the alias the kairos worker dials, keeping it on the
+  # compose `default` network too.
+  scorer:
     networks:
       default:
-      edge:
+      kairos-scorer:
         aliases:
-          - kairos-llm-scorer-inner
-    depends_on:
-      scorer:
-        condition: service_healthy
+          - kairos-llm-scorer
 
 networks:
-  # Shared external network joining this project's inner Caddy with the
-  # host-level edge proxy. Created out-of-band on the deploy host:
-  #   docker network create edge
-  edge:
+  # Dedicated private network for kairos-worker ↔ scorer. This repo is a MEMBER of
+  # the `kairos-scorer` network; it is created out-of-band by the OWNER (kairos) —
+  # not here:
+  #   docker network create kairos-scorer
+  kairos-scorer:
     external: true
