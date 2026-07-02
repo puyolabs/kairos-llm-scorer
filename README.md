@@ -28,13 +28,20 @@ it returns a structured verdict:
   "match_score": 0-100,
   "reasoning": "one paragraph citing concrete profile evidence",
   "risks_and_gaps": ["..."],
-  "tailoring_hints": ["..."]
+  "tailoring_hints": ["..."],
+  "method": "deterministic | llm",
+  "baseline": { "decision": "...", "match_score": 0-100, "...": "..." }
 }
 ```
 
 The verdict also carries deployment provenance (`version`, `build_sha`, `scorer`),
 stamped by the application layer. `tailoring_hints` is populated only when
-`decision = "apply"`. Scoring weighs four axes: **technical fit (40%), seniority
+`decision = "apply"`. `method` records which stage produced the surfaced verdict;
+`baseline` retains the deterministic pre-LLM score and is present **only when the
+LLM screener took the lead** (`method = "llm"`), so a caller can label the two
+grades and show both. When the arithmetic baseline is final, `method` is
+`"deterministic"` and `baseline` is `null` (the surfaced verdict *is* the
+baseline). Scoring weighs four axes: **technical fit (40%), seniority
 fit (20%), domain fit (20%), remote + timezone fit (20%)**, folded through a
 multiplicative gate.
 

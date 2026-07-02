@@ -22,7 +22,7 @@ from .profile import (
 )
 from .request import ScoreRequest, SonnetJudgement
 from .shared import SemanticTag, SeniorityHint
-from .verdict import Decision, Verdict
+from .verdict import Baseline, Decision, Method, ScoreResult, Verdict
 
 __all__ = [
     "SemanticTag",
@@ -39,5 +39,8 @@ __all__ = [
     "ScoreRequest",
     "SonnetJudgement",
     "Verdict",
+    "ScoreResult",
+    "Baseline",
     "Decision",
+    "Method",
 ]

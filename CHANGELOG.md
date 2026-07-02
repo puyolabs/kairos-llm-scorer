@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-06-22
+
+### Added
+- **`/score` now labels which stage led and retains both grades.** The response is
+  a new `ScoreResult` (the `Verdict` plus two fields): `method`
+  (`"deterministic" | "llm"`) names the stage that produced the surfaced verdict,
+  and `baseline` retains the deterministic pre-LLM score — present only when the
+  LLM screener took the lead (`method == "llm"`), so callers can label
+  deterministic vs. LLM grades and see both. The screener's structured-output
+  schema stays `Verdict`, so the model is never asked to produce these fields.
+  Additive and backward-compatible: existing consumers that read only the verdict
+  fields are unaffected.
+
 ## [1.1.0] — 2026-06-15
 
 ### Performance
